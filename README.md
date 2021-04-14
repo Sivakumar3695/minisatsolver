@@ -4,6 +4,8 @@ This project can be used to check if the given SAT problem (CNF format) can be s
 
 The project is designed in such a way that the SAT problem has to be entered in the solvermain.py file. On running this python file, the SAT problem entered will be evaluated.
 
+`As there is no external dependecy for this project, the project can be cloned and used directly`
+
 # Steps to initialise the CNF formula for SAT solving:
 1. Create an object of Solver
 

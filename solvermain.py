@@ -13,4 +13,4 @@ if __name__ == '__main__':
         print(model)
     else:
         print("UnSat")
-    print("Done")
+    print("MiniSat solving completed")

@@ -272,7 +272,7 @@ class Solver:
                     # model found
                     for var in self._variableobjectlist:
                         model[var] = self._variableobjectlist[var]._value if self._variableobjectlist[var]._value is not None else False
-                    print(model)
+                    # print(model)
                     return model
                 else:
                     lit = self.__getmaximumactivityliteralobj()

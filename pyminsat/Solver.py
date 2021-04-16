@@ -1,6 +1,7 @@
 from pyminsat.Clause import Clause
 from pyminsat.Literals import Literals
 from pyminsat.Variable import Variable
+from time import time
 
 
 class Solver:
@@ -33,8 +34,7 @@ class Solver:
         :return: None
         """
 
-        clause = Clause(self, literals, False)
-        self._clauses.append(clause)
+        Clause(self, literals, False)
 
     def find_solution(self):
         """
@@ -164,7 +164,8 @@ class Solver:
             True by default
         """
         for clause in self._clauses:
-            clause._simplify(solver=self)
+            if clause._simplify(solver=self):
+                self._clauses.remove(clause)
         return True
 
     def __propagate(self):
@@ -208,6 +209,8 @@ class Solver:
             True / False
         """
         var_val = self._variableobjectlist[lit._varsymbol]._value
+        if var_val is None:
+            return var_val
         return var_val if not lit._negate else not var_val
 
     def __recordlearntclause(self, learnt_lits):
@@ -226,6 +229,50 @@ class Solver:
         self._enqueue(clause._lits[0], clause)
         if clause is not None:
             self._learntclause.append(clause)
+            if len(clause._lits) == 1:
+                # in case of unit clause, watched will be added only here.
+                self._watches[clause._lits[0]._varsymbol].append(clause)
+
+    def __checkintegrity(self):
+        for i in range(0, len(self._clauses)):
+            for j in range(i+1, len(self._clauses)):
+                if self._clauses[i] == self._clauses[j]:
+                    print("Duplicate problem-problem clauses found")
+            for j in range(0, len(self._learntclause)):
+                if self._clauses[i] == self._learntclause[j]:
+                    print("Duplicate problem-learnt clause found")
+            watched_cnt = 0
+            for watch in self._watches:
+                for j in range(0, len(self._watches[watch])):
+                    if self._watches[watch][j] == self._clauses[i]:
+                        watched_cnt += 1
+            if len(self._clauses[i]._lits) > 1 and watched_cnt != 2:
+                print("a non unit Clause is not watched by 2 literal")
+            elif len(self._clauses[i]._lits) == 1 and watched_cnt != 1:
+                print("a unit clause is not watched by 1 literal")
+
+        for i in range(0, len(self._learntclause)):
+            for j in range(i+1, len(self._learntclause)):
+                if self._learntclause[i] == self._learntclause[j]:
+                    print("Duplicate learnt-learnt clause found")
+            watched_cnt = 0
+            for watch in self._watches:
+                for k in range(0, len(self._watches[watch])):
+                    if self._watches[watch][k] == self._learntclause[i]:
+                        watched_cnt += 1
+            if len(self._learntclause[i]._lits) > 1 and watched_cnt != 2:
+                print("a non unit learnt Clause is not watched by 2 literal")
+            elif len(self._learntclause[i]._lits) == 1 and watched_cnt != 1:
+                print("a unit learnt clause is not watched by 1 literal")
+
+        for watch in self._watches:
+            for i in range(0, len(self._watches[watch])):
+                clause = self._watches[watch][i]
+                for j in range(i+1, len(watch)):
+                    if clause == self._watches[watch][j]:
+                        print("Duplicate clause found in a watch of a varaible")
+
+
 
     def __solve(self):
         """
@@ -259,6 +306,7 @@ class Solver:
             conflict = self.__propagate()
             if conflict is not None:
                 if self.__latestdecisionlevel == 0:
+                    # self.__checkintegrity()
                     return None
                 learnt_clause = []
                 bt_level = self.__analyseconflict(conflict, learnt_clause)
@@ -268,7 +316,7 @@ class Solver:
             else:
                 if (len(self._learntclause) - self.__nAssigns()) >= self.__nlearntsallowed:
                     self.__reduceDB()
-                if self.__nAssigns() == len(self._variablelist):
+                if self.__allclausessatisfied() or (self.__nAssigns() == len(self._variablelist)):
                     # model found
                     for var in self._variableobjectlist:
                         model[var] = self._variableobjectlist[var]._value if self._variableobjectlist[var]._value is not None else False
@@ -278,6 +326,18 @@ class Solver:
                     lit = self.__getmaximumactivityliteralobj()
                     self.__latestdecisionlevel = self.__latestdecisionlevel + 1
                     self.__assume(lit)
+
+    def __allclausessatisfied(self):
+        """
+        Check if all the clauses of the given problem are satisfied
+        :return:
+            1. TRUE if all the clauses are satisfied by the given variable assignments
+            2. FALSE otherwise.
+        """
+        for clause in self._clauses:
+            if not self._valueOf(clause._lits[0]):
+                return False
+        return True
 
     def __analyseconflict(self, conflict, learnt_clause):
         """
@@ -399,7 +459,7 @@ class Solver:
         """
         clause.clause_activity = clause.clause_activity + self.__clauseinc
 
-    def __bumpvariableactivity(self, lit_obj):
+    def _bumpvariableactivity(self, lit_obj):
         """
         acitivty of the given variable will be increased by adding the solver.__variableinc factor
         :param
@@ -446,8 +506,9 @@ class Solver:
             i = i + 1
         while i < len(self._learntclause):
             l_cla = self._learntclause[i]
-            if not l_cla.is_locked(self) and l_cla.clause_activity < cla_lim:
+            if not l_cla._islocked(self) and l_cla.clause_activity < cla_lim:
                 l_cla._removeclause(self)
+            i = i + 1
 
     def __undoone(self):
         """

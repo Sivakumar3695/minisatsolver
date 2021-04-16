@@ -3,24 +3,27 @@ class Clause:
         self._lits = solver._getliteralobjectlist(lits)
         self.__learnt = is_learnt
         if not is_learnt:
-            self._simplify(solver)
-        if len(lits) == 1:
+            if self._simplify(solver):
+                return
+        if len(self._lits) == 1:
             # if no. of literals is 1, the clause can be unit-propagated
             solver._enqueue(self._lits[0], self)
         else:
+            # add the clauses to the watches list of lits[0] and lits[1]
+            solver._watches[self._lits[0]._varsymbol].append(self)
+            solver._watches[self._lits[1]._varsymbol].append(self)
+            solver._bumpvariableactivity(self._lits[0])
             if is_learnt:
                 # if the clause is learnt,
                 # its activity and its literals' activities can be bumped while adding the clause
                 solver._bumpclauseactivity(self)
-                for i in range(0, len(self._lits)):
+                for i in range(1, len(self._lits)):
                     lit = self._lits[i]
                     solver._bumpvariableactivity(lit)
-            # add the clauses to the watches list of lits[0] and lits[1]
-            solver._watches[self._lits[0]._varsymbol].append(self)
-            solver._watches[self._lits[1]._varsymbol].append(self)
+                return
             solver._clauses.append(self)
-
     clause_activity = 1
+
 
     def _simplify(self, solver):
         """
@@ -31,20 +34,24 @@ class Clause:
             4. If a literal and its negation exists in the same clause,
                 the clause can be removed as it will definitely evaluate to True in zeroth decision level.
         :param solver: A solver object
-        :return: None.
+        :return:
+            1. True if the clause is removed from solver object
+            2. False otherwise
         """
         if len(self._lits) == 0:
             print("Empty clause. Hence, it will be removed.")
-            solver._clauses.remove(self)
+            return True
         for lit in self._lits:
             # if any of the literal evaluates to True, we can remove whole clause itself
-            if solver._variableobjectlist[lit._varsymbol]._value:
-                solver._clauses.remove(self)
-            elif solver._variableobjectlist[lit._varsymbol]._value is not None:
-                self._lits.remove(lit)  # false literals can be removed as it will be of no use for the clause.
+            if solver._valueOf(lit):
+                return True
             # id p and ~p exists in the same clause, the clause can be removed
             elif lit._isnegationexists(self._lits):
-                solver._clauses.remove(self)
+                return True
+            elif solver._valueOf(lit) is False:
+                self._lits.remove(lit)  # false literals can be removed as it will be of no use for the clause.
+                return len(self._lits) == 0
+        return False
 
     def __swap(self, index_1, index_2):
         """
@@ -91,7 +98,12 @@ class Clause:
         if solver._valueOf(self._lits[0]):
             solver._watches[var].append(self)
             return True
+        elif len(self._lits) == 1:
+            # in case of unit clause, if lit[0] evaluates to False, it results in conflict.
+            solver._watches[var].append(self)
+            return False
         if self._lits[0]._varsymbol == var and solver._valueOf(self._lits[0]) is False:
+            # print(self.__learnt)
             self.__swap(0, 1)
         elif self._lits[1]._varsymbol == var and solver._valueOf(self._lits[1]) is True:
             self.__swap(0, 1)
@@ -101,6 +113,8 @@ class Clause:
             if solver._valueOf(self._lits[i]) is not False:
                 self.__swap(i, 1)
                 solver._watches[self._lits[1]._varsymbol].append(self)
+                if solver._valueOf(self._lits[1]):
+                    self.__swap(1, 0)
                 return True
         # unit_propagation
         solver._watches[var].append(self)
@@ -155,5 +169,6 @@ class Clause:
         if not self.__learnt:
             return
         solver._watches[self._lits[0]._varsymbol].remove(self)
-        solver._watches[self._lits[1]._varsymbol].remove(self)
+        if len(self._lits) > 1:
+            solver._watches[self._lits[1]._varsymbol].remove(self)
         solver._learntclause.remove(self)

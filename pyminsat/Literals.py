@@ -2,9 +2,9 @@ class Literals:
     def __init__(self, solver, var, negate=False):
         self._varsymbol = solver._getoraddvariable(var)._symbol
         self._negate = negate
-        self._variableactivity = 1
         lit_symbol = '-' + self._varsymbol if negate else self._varsymbol
         solver._literalobjectlist[lit_symbol] = self
+        solver._setliteralactivityinliteralinit(self)
 
     def _isnegationexists(self, lits_obj_list):
         """

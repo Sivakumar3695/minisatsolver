@@ -1,11 +1,9 @@
 from pyminsat.Clause import Clause
 from pyminsat.Literals import Literals
 from pyminsat.Variable import Variable
-from time import time
-
 
 class Solver:
-    def __init__(self):
+    def __init__(self, custom_branching_heuristics=False):
         self._clauses = []
         self._learntclause = []
         self.__trail = []
@@ -14,15 +12,22 @@ class Solver:
         self._variablelist = []
         self._variableobjectlist = {}
         self._literalobjectlist = {}
+        self._literalactivity = {}
+
+        # this can be added if literal activity of all variables are needed while back-tracking
+        # self.__literalactivityhistory = []
+
         self.__propQ = []
         self._watches = {}
         self.__nlearntsallowed = 0
+        self._tclausecnt = 0
 
         self.__clauseinc = 1000
         self.__clausedecayfactor = 0.999
 
-        self.__variableinc = 1000
+        self.__variableinc = 100
         self.__variabledecayfactor = 0.95
+        self.__custombranching = custom_branching_heuristics
 
     def add_problem_clause_db(self, literals):
         """
@@ -46,8 +51,8 @@ class Solver:
             None: if the provided SAT CNF formula cannot be satisfied.
         """
         self.__nlearntsallowed = len(self._clauses) / 3
-        if not self.__simplifyclausedb():
-            return None
+        # if not self.__simplifyclausedb():
+        #     return None
         return self.__solve()
 
     def _enqueue(self, lit, from_clause=None):
@@ -85,6 +90,7 @@ class Solver:
             var_obj._reason = from_clause
             self.__trail.append(var_obj._symbol)
             self.__propQ.append(var_obj._symbol)
+            # self.__literalactivityhistory.append(self._literalactivity.copy())
             return True
 
     def __nAssigns(self):
@@ -199,6 +205,20 @@ class Solver:
                         self._watches[var].append(temp_clause_list[j])
                     self.__propQ.clear()
                     return clause
+                else:
+                    self._handleliteralactivityinpropagation(clause)
+
+    def _handleliteralactivityinpropagation(self, clause):
+        """
+        This method can be overridden to implement custom branching heuristics
+        when literal activity has to be updated after every clause propagation
+
+        This method will be called only when the clause has no conflict during propagation.
+
+        :param clause: Clause object
+        :return: None
+        """
+        return
 
     def _valueOf(self, lit):
         """
@@ -234,6 +254,22 @@ class Solver:
                 self._watches[clause._lits[0]._varsymbol].append(clause)
 
     def __checkintegrity(self):
+        """
+        This function is only used to check the correctness of the algorithm
+        WARNING: This method should not be used for solving the SAT as it will severely affect the performance.
+
+        This method can be used while debugging / testing and it ensures the following:
+        1. a same clause doesn't exist more than once.
+            Note: Same clauses in the sense that the clause objects should be the same.
+                    clauses with same literals cannot be considered as same clause.
+                    i.e they can be similar clause with matching literals
+        2. a same learnt clause doesn't exist more than once.
+        3. any non-unit clause should be watched by exactly two literals
+        4. any non-unit learnt clause should be watched by exactly two literals
+        5. any unit clause should be watched by exactly one literal
+        6. any unit learnt clause should be watched by exactly one literal.
+        :return: None
+        """
         for i in range(0, len(self._clauses)):
             for j in range(i+1, len(self._clauses)):
                 if self._clauses[i] == self._clauses[j]:
@@ -278,35 +314,40 @@ class Solver:
         """
         Basic solve method.
         This method will be called immediately after performing simplifyDB from find_solution() method.
-        Flow:
-        while(True)
-        [
-            #unit_propagation
-            if conflict
-            [
-                #if conflict occurred at decision_level-0, return None (UN_SAT)
-                1.analyse conlict
-                2.back_track
-                3.add_learnt_clause
-                4.handle_decay_activities
-            ]
-            else
-            [
-                1.reduceDB if learnt cluase count crossed the limit
-                2.if all variables are assigned with a value, return Model (SAT)
-                3.otherwise, get next variable to assign value and proceed.
-            ]
-        ]
+
         :return:
             1. Model will be returned if the SAT problem can be satisfied
             2. None if the SAT problem cannot be satisfied
         """
+        #
+        # Flow:
+        # while(True)
+        # [
+        #     #unit_propagation
+        #     if conflict
+        #     [
+        #         #if conflict occurred at decision_level-0, return None (UN_SAT)
+        #         1.analyse conlict
+        #         2.back_track
+        #         3.add_learnt_clause
+        #         4.handle_decay_activities
+        #     ]
+        #     else
+        #     [
+        #         1.reduceDB if learnt cluase count crossed the limit
+        #         2.if all variables are assigned with a value, return Model (SAT)
+        #         3.otherwise, get next variable to assign value and proceed.
+        #     ]
+        # ]
         model = {}
+        loop_count = 0
         while True:
             conflict = self.__propagate()
+            loop_count += 1
             if conflict is not None:
                 if self.__latestdecisionlevel == 0:
                     # self.__checkintegrity()
+                    print("Total number of Loops:" + str(loop_count))
                     return None
                 learnt_clause = []
                 bt_level = self.__analyseconflict(conflict, learnt_clause)
@@ -316,16 +357,28 @@ class Solver:
             else:
                 if (len(self._learntclause) - self.__nAssigns()) >= self.__nlearntsallowed:
                     self.__reduceDB()
-                if self.__allclausessatisfied() or (self.__nAssigns() == len(self._variablelist)):
+                if self._ismodelfound():
                     # model found
                     for var in self._variableobjectlist:
                         model[var] = self._variableobjectlist[var]._value if self._variableobjectlist[var]._value is not None else False
                     # print(model)
+                    print("Total number of Loops:" + str(loop_count))
                     return model
                 else:
-                    lit = self.__getmaximumactivityliteralobj()
+                    lit = self._getnextliteralobject()
                     self.__latestdecisionlevel = self.__latestdecisionlevel + 1
                     self.__assume(lit)
+
+    def _ismodelfound(self):
+        """
+        Check if model found after a non-conflict variable assignment.
+        Model is found if:
+        1. All clauses are satisfied.
+        2. or if all variables are assigned with a value (True or False).
+
+        :return: True or False
+        """
+        return self.__allclausessatisfied() or (self.__nAssigns() == len(self._variablelist))
 
     def __allclausessatisfied(self):
         """
@@ -348,41 +401,7 @@ class Solver:
             1. leave room for asserting literal
             2. push all the literals that forced the literals of the conflict clause to take the value assigned now.
             3. set learnt_clause[0] = asserting literal
-        Detailed algorithmic description for step-2:
-            counter = 0;
-            do
-            [
-                1. reason = conflict_clause._calculatereason(p)
-                    //for the first iteration, conflict_clause will be the clause passed to this method
-                    //for further iterations, conflict_clause = the reason for one of the literals in the learnt_clause
-                2. for all the literals of the reason:
-                    [
-                        //seen[lit] == True will mean that the literal is already iterated for the leant_cla computation
-                        // hence, it should not be iterated again
-                        if (!seen[lit])
-                        [
-                           seen[lit] = True;
-                           if lit.decision_level() == current_decision_level
-                                //if the literal is assigned a value in the current decision level,
-                                //the computation of reason for it is necessary.
-                                counter++;
-                           else if q.decision_level > 0
-                                //zeroth decision level literals cannot be in learnt_clause
-                                //because those are not assigned a value based on any assumption
-                                learnt_clause.push(lit)
-                                bt_level = max(bt_level, lit.decision_level)
-                        ]
-                    ]
-                    //pick the next variable for conflict reason analysis:
-                    do
-                    [
-                        p = the last assigned variable
-                        conflict = p.reason
-                        undoone() //to reset and pop the last assigned variable in trail list
-                    ]while (!seen[p]) //only literals with (seen[p]=True) can be the next literal for conflict analysis
-            ]while(counter > 0)
-            NOte : p will be the asserting literal.
-                    The value of 'p' present while breaking the condition counter > 0 will be the asserting literal.
+
         :param
             conflict: A Clause object - the conflict clause found during the propagation process
         :param
@@ -392,6 +411,44 @@ class Solver:
         :return:
             bt_level - A number. i.e backtracking level to jump back to resolve the conflict
         """
+        # Detailed algorithmic description for step-2:
+        #     counter = 0;
+        #     do
+        #     [
+        #         1. reason = conflict_clause._calculatereason(p)
+        #             //for the first iteration,
+        #               conflict_clause will be the clause passed to this method
+        #             //for further iterations,
+        #               conflict_clause = the reason for one of the literals in the learnt_clause
+        #         2. for all the literals of the reason:
+        #             [
+        #                 //seen[lit] == True
+        #                       will mean that the literal is already iterated for the learnt_cla computation
+        #                 // hence, it should not be iterated again
+        #                 if (!seen[lit])
+        #                 [
+        #                    seen[lit] = True;
+        #                    if lit.decision_level() == current_decision_level
+        #                         //if the literal is assigned a value in the current decision level,
+        #                         //the computation of reason for it is necessary.
+        #                         counter++;
+        #                    else if q.decision_level > 0
+        #                         //zeroth decision level literals cannot be in learnt_clause
+        #                         //because those are not assigned a value based on any assumption
+        #                         learnt_clause.push(lit)
+        #                         bt_level = max(bt_level, lit.decision_level)
+        #                 ]
+        #             ]
+        #             //pick the next variable for conflict reason analysis:
+        #             do
+        #             [
+        #                 p = the last assigned variable
+        #                 conflict = p.reason
+        #                 undoone() //to reset and pop the last assigned variable in trail list
+        #             ]while (!seen[p]) //only literals with (seen[p]=True) can be the nxt literal for conflict analysis
+        #     ]while(counter > 0)
+        #     Note : p will be the asserting literal.
+        #             The value of 'p' present while breaking the condition counter > 0 will be the asserting literal.
         counter = 0
         p = None
         p_lit = None
@@ -459,6 +516,13 @@ class Solver:
         """
         clause.clause_activity = clause.clause_activity + self.__clauseinc
 
+    def _setliteralactivityinliteralinit(self, lit_obj):
+        lit_symbol = '-' + lit_obj._varsymbol if lit_obj._negate else lit_obj._varsymbol
+        self._literalactivity[lit_symbol] = 1 if not self.__custombranching else 0
+
+    def _bumpvariableactivityinclause(self, lit_obj_list):
+        self._bumpvariableactivity(lit_obj_list[0])
+
     def _bumpvariableactivity(self, lit_obj):
         """
         acitivty of the given variable will be increased by adding the solver.__variableinc factor
@@ -466,9 +530,10 @@ class Solver:
             lit_obj: A literal Object (note: do not pass literal string)
         :return:
         """
-        lit_obj._variableactivity = lit_obj._variableactivity + self.__variableinc
+        lit_symbol = '-' + lit_obj._varsymbol if lit_obj._negate else lit_obj._varsymbol
+        self._literalactivity[lit_symbol] = self._literalactivity[lit_symbol] + self.__variableinc
 
-    def __getmaximumactivityliteralobj(self):
+    def _getnextliteralobject(self):
         """
         Use this method to get an unassigned variable with highest activity.
         :return: A variable object (note: the return data type will not be a variable string)
@@ -478,8 +543,8 @@ class Solver:
         for var in self._literalobjectlist:
             lit_obj = self._literalobjectlist[var]
             var_obj = self._variableobjectlist[lit_obj._varsymbol]
-            if lit_obj._variableactivity > max_activity and var_obj._value is None:
-                max_activity = lit_obj._variableactivity
+            if self._literalactivity[var] > max_activity and var_obj._value is None:
+                max_activity = self._literalactivity[var]
                 out_lit_obj = lit_obj
         return out_lit_obj
 
@@ -524,6 +589,7 @@ class Solver:
         var_obj._value = None
         var_obj._decisionlevel = -1
         var_obj._reason = None
+        # self._literalactivity = self.__literalactivityhistory.pop()
 
     def __canceluntil(self, bt_level):
         """

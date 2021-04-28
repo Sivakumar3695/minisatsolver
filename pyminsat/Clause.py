@@ -12,7 +12,7 @@ class Clause:
             # add the clauses to the watches list of lits[0] and lits[1]
             solver._watches[self._lits[0]._varsymbol].append(self)
             solver._watches[self._lits[1]._varsymbol].append(self)
-            solver._bumpvariableactivity(self._lits[0])
+            solver._bumpvariableactivityinclause(self._lits)
             if is_learnt:
                 # if the clause is learnt,
                 # its activity and its literals' activities can be bumped while adding the clause
@@ -20,6 +20,8 @@ class Clause:
                 for i in range(1, len(self._lits)):
                     lit = self._lits[i]
                     solver._bumpvariableactivity(lit)
+                # print("L Clause:")
+                # print(lits)
                 return
             solver._clauses.append(self)
     clause_activity = 1
@@ -97,6 +99,8 @@ class Clause:
         """
         if solver._valueOf(self._lits[0]):
             solver._watches[var].append(self)
+            if self._lits[0]._varsymbol == var:
+                solver._tclausecnt += 1
             return True
         elif len(self._lits) == 1:
             # in case of unit clause, if lit[0] evaluates to False, it results in conflict.
@@ -107,6 +111,7 @@ class Clause:
             self.__swap(0, 1)
         elif self._lits[1]._varsymbol == var and solver._valueOf(self._lits[1]) is True:
             self.__swap(0, 1)
+            solver._tclausecnt += 1
             solver._watches[var].append(self)
             return True
         for i in range(2, len(self._lits)):
@@ -119,7 +124,7 @@ class Clause:
         # unit_propagation
         solver._watches[var].append(self)
         return solver._enqueue(self._lits[0], self)
-
+        
     def _islocked(self, solver):
         """
         This method will return if the clause is responsible for its lits[0] value.
